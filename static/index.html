@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Estoque</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; color: #f0f0f0; font-family: 'Segoe UI', sans-serif; padding-bottom: 60px; }
+  input:focus { outline: none; }
+  button:active { opacity: 0.8; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+// =============================================
+// Envia o alerta para o NOSSO PRÓPRIO servidor
+// (mesmo endereço da tela, por isso o caminho
+// começa com "/" e não com "https://...")
+// =============================================
+async function enviarAlerta(produto) {
+  try {
+    const r = await fetch('/alerta', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        produto:    produto.nome,
+        quantidade: produto.quantidade,
+        minimo:     produto.minimo,
+        unidade:    produto.unidade
+      })
+    });
+    const data = await r.json();
+    console.log("Resposta do servidor:", data);
+    return data.ok;
+  } catch (e) {
+    console.error("Erro ao enviar alerta:", e);
+    return false;
+  }
+}
+
+// =============================================
+// PRODUTOS INICIAIS (todos OK para o teste)
+// =============================================
+const PRODUTOS_INICIAIS = [
+  { id:1, nome:"Arroz",        quantidade:8,  minimo:5,  unidade:"kg", categoria:"Grãos"    },
+  { id:2, nome:"Óleo de soja", quantidade:6,  minimo:4,  unidade:"L",  categoria:"Temperos" },
+  { id:3, nome:"Frango",       quantidade:15, minimo:10, unidade:"kg", categoria:"Carnes"   },
+  { id:4, nome:"Feijão",       quantidade:8,  minimo:5,  unidade:"kg", categoria:"Grãos"    },
+  { id:5, nome:"Sal",          quantidade:6,  minimo:3,  unidade:"kg", categoria:"Temperos" },
+];
+
+function badge(bg, color) {
+  return { background:bg, color, fontSize:10, fontWeight:700,
+    padding:"3px 8px", borderRadius:20, letterSpacing:0.5,
+    textTransform:"uppercase", whiteSpace:"nowrap" };
+}
+
+function StatusBadge({ p }) {
+  const pct = p.quantidade / p.minimo;
+  if (p.quantidade === 0) return <span style={badge("#FF3B30","#fff")}>ZERADO</span>;
+  if (pct <= 1)           return <span style={badge("#FF9500","#fff")}>ABAIXO DO MÍNIMO</span>;
+  if (pct <= 1.5)         return <span style={badge("#FFD60A","#1a1a1a")}>ATENÇÃO</span>;
+  return                         <span style={badge("#34C759","#fff")}>OK</span>;
+}
+
+function Barra({ p }) {
+  const pct = Math.min((p.quantidade / (p.minimo * 2)) * 100, 100);
+  const cor = p.quantidade === 0 ? "#FF3B30"
+    : p.quantidade <= p.minimo ? "#FF9500"
+    : p.quantidade <= p.minimo * 1.5 ? "#FFD60A" : "#34C759";
+  return (
+    <div style={{ background:"#2a2a2a", borderRadius:4, height:5, margin:"10px 0 4px" }}>
+      <div style={{ width:pct+"%", height:"100%", borderRadius:4, background:cor, transition:"width 0.4s" }} />
+    </div>
+  );
+}
+
+function App() {
+  const [produtos, setProdutos]       = useState(PRODUTOS_INICIAIS);
+  const [alertas, setAlertas]         = useState([]);
+  const [editando, setEditando]       = useState(null);
+  const [novoValor, setNovoValor]     = useState("");
+  const [adicionando, setAdicionando] = useState(false);
+  const [novo, setNovo]               = useState({ nome:"", quantidade:"", minimo:"", unidade:"kg", categoria:"" });
+  const [enviando, setEnviando]       = useState(false);
+
+  const emAlerta = produtos.filter(p => p.quantidade <= p.minimo);
+  const zerados  = produtos.filter(p => p.quantidade === 0);
+
+  async function salvar(id) {
+    const val = parseFloat(novoValor);
+    if (isNaN(val) || val < 0) return;
+
+    // Pega os dados ATUAIS do produto antes de qualquer atualização
+    const produtoAtual = produtos.find(p => p.id === id);
+    if (!produtoAtual) return;
+
+    const produtoAtualizado = { ...produtoAtual, quantidade: val };
+
+    // Atualiza a lista na tela
+    setProdutos(prev => prev.map(p => p.id === id ? produtoAtualizado : p));
+    setEditando(null);
+    setNovoValor("");
+
+    // Verifica usando o valor que acabamos de calcular (não depende do estado)
+    if (val <= produtoAtual.minimo) {
+      console.log("Abaixo do mínimo! Disparando alerta para:", produtoAtualizado.nome);
+
+      const jaExiste = alertas.find(a => a.pid === id && !a.lido);
+      if (!jaExiste) {
+        setAlertas(prev => [{
+          id: Date.now(), pid: id,
+          nome: produtoAtual.nome, qtd: val,
+          min: produtoAtual.minimo, un: produtoAtual.unidade,
+          hora: new Date().toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }),
+          lido: false, enviado: false
+        }, ...prev]);
+      }
+
+      setEnviando(true);
+      const ok = await enviarAlerta(produtoAtualizado);
+      setEnviando(false);
+
+      setAlertas(prev => prev.map(a =>
+        a.pid === id && !a.lido ? { ...a, enviado: ok } : a
+      ));
+    }
+  }
+
+  function adicionarProduto() {
+    if (!novo.nome || novo.quantidade === "" || novo.minimo === "") return;
+    setProdutos(prev => [...prev, {
+      id: Date.now(), nome: novo.nome,
+      quantidade: parseFloat(novo.quantidade),
+      minimo: parseFloat(novo.minimo),
+      unidade: novo.unidade || "un",
+      categoria: novo.categoria || "Geral"
+    }]);
+    setNovo({ nome:"", quantidade:"", minimo:"", unidade:"kg", categoria:"" });
+    setAdicionando(false);
+  }
+
+  const alertasAtivos = alertas.filter(a => !a.lido);
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#111", color:"#f0f0f0", fontFamily:"'Segoe UI',sans-serif", paddingBottom:60 }}>
+
+      {/* HEADER */}
+      <div style={{ background:"linear-gradient(135deg,#1a1a1a,#222)", borderBottom:"1px solid #2a2a2a", padding:"20px 16px 16px" }}>
+        <div style={{ maxWidth:600, margin:"0 auto" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div>
+              <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase", marginBottom:4 }}>Restaurante</div>
+              <div style={{ fontSize:22, fontWeight:700 }}>Controle de Estoque</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
+              {alertasAtivos.length > 0 && (
+                <div style={{ background:"#FF3B30", color:"#fff", borderRadius:20, padding:"6px 14px", fontSize:13, fontWeight:700 }}>
+                  {alertasAtivos.length} alerta{alertasAtivos.length > 1 ? "s" : ""}
+                </div>
+              )}
+              {enviando && <div style={{ fontSize:11, color:"#25D366" }}>📲 Enviando WhatsApp...</div>}
+            </div>
+          </div>
+
+          <div style={{ display:"flex", gap:10, marginTop:16 }}>
+            {[
+              { label:"Produtos",  val:produtos.length, cor:"#888" },
+              { label:"Em alerta", val:emAlerta.length, cor:emAlerta.length > 0 ? "#FF9500" : "#34C759" },
+              { label:"Zerados",   val:zerados.length,  cor:"#FF3B30" },
+            ].map(c => (
+              <div key={c.label} style={{ flex:1, background:"#1e1e1e", borderRadius:10, padding:"10px 14px", border:"1px solid #2a2a2a" }}>
+                <div style={{ fontSize:20, fontWeight:800, color:c.cor }}>{c.val}</div>
+                <div style={{ fontSize:11, color:"#555", marginTop:2 }}>{c.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth:600, margin:"0 auto", padding:"0 16px" }}>
+
+        {/* ALERTAS */}
+        {alertasAtivos.length > 0 && (
+          <div style={{ marginTop:20 }}>
+            <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase", marginBottom:10 }}>Alertas pendentes</div>
+            {alertasAtivos.map(a => (
+              <div key={a.id} style={{ background:"#1e1310", border:"1px solid #3a2010", borderRadius:12, padding:16, marginBottom:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                  <div>
+                    <div style={{ fontWeight:700, fontSize:15 }}>⚠️ {a.nome}</div>
+                    <div style={{ color:"#888", fontSize:13, marginTop:4 }}>
+                      {a.qtd} {a.un} · mín: {a.min} {a.un} · {a.hora}
+                    </div>
+                    <div style={{ fontSize:12, marginTop:4, color: a.enviado ? "#25D366" : "#888" }}>
+                      {a.enviado ? "📲 WhatsApp enviado!" : "⏳ Enviando..."}
+                    </div>
+                  </div>
+                  <button onClick={() => setAlertas(prev => prev.map(x => x.id===a.id ? {...x,lido:true} : x))}
+                    style={{ background:"none", border:"1px solid #3a2010", color:"#888",
+                      borderRadius:8, padding:"4px 10px", fontSize:12, cursor:"pointer" }}>
+                    ✓ Ok
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* PRODUTOS */}
+        <div style={{ marginTop:20 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase" }}>Produtos</div>
+            <button onClick={() => setAdicionando(true)}
+              style={{ background:"#1e3a2a", border:"1px solid #2d5a3d", color:"#34C759",
+                borderRadius:8, padding:"6px 14px", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+              + Adicionar
+            </button>
+          </div>
+
+          {adicionando && (
+            <div style={{ background:"#1a1a1a", border:"1px solid #333", borderRadius:12, padding:16, marginBottom:12 }}>
+              <div style={{ fontSize:13, fontWeight:700, marginBottom:12, color:"#34C759" }}>Novo produto</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                {[
+                  { key:"nome",       placeholder:"Nome do produto",        span:2 },
+                  { key:"categoria",  placeholder:"Categoria (ex: Carnes)", span:2 },
+                  { key:"quantidade", placeholder:"Qtd atual",  type:"number" },
+                  { key:"minimo",     placeholder:"Qtd mínima", type:"number" },
+                  { key:"unidade",    placeholder:"Unidade (kg, L, un...)" },
+                ].map(f => (
+                  <input key={f.key} type={f.type||"text"} placeholder={f.placeholder}
+                    value={novo[f.key]}
+                    onChange={e => setNovo(prev => ({...prev,[f.key]:e.target.value}))}
+                    style={{ gridColumn:f.span===2?"1 / -1":"auto",
+                      background:"#222", border:"1px solid #333", color:"#fff",
+                      borderRadius:8, padding:"8px 12px", fontSize:13 }} />
+                ))}
+              </div>
+              <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                <button onClick={adicionarProduto}
+                  style={{ background:"#34C759", color:"#000", border:"none",
+                    borderRadius:8, padding:"8px 18px", fontSize:13, fontWeight:700, cursor:"pointer", flex:1 }}>
+                  Salvar
+                </button>
+                <button onClick={() => setAdicionando(false)}
+                  style={{ background:"#222", color:"#888", border:"1px solid #333",
+                    borderRadius:8, padding:"8px 18px", fontSize:13, cursor:"pointer" }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {produtos.map(p => (
+            <div key={p.id} style={{
+              background: p.quantidade <= p.minimo ? "#1a1510" : "#1a1a1a",
+              border: "1px solid " + (p.quantidade===0 ? "#3a1010" : p.quantidade<=p.minimo ? "#3a2a10" : "#2a2a2a"),
+              borderRadius:12, padding:16, marginBottom:10, transition:"all 0.3s" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                    <span style={{ fontWeight:700, fontSize:15 }}>{p.nome}</span>
+                    <StatusBadge p={p} />
+                  </div>
+                  <div style={{ fontSize:11, color:"#555", marginTop:3 }}>{p.categoria}</div>
+                </div>
+
+                {editando === p.id ? (
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <input type="number" value={novoValor}
+                      onChange={e => setNovoValor(e.target.value)} autoFocus
+                      onKeyDown={e => { if(e.key==="Enter") salvar(p.id); if(e.key==="Escape") setEditando(null); }}
+                      style={{ width:70, background:"#222", border:"1px solid #555", color:"#fff",
+                        borderRadius:8, padding:"4px 8px", fontSize:16, textAlign:"center" }} />
+                    <button onClick={() => salvar(p.id)}
+                      style={{ background:"#34C759", color:"#000", border:"none",
+                        borderRadius:6, padding:"4px 10px", fontSize:13, fontWeight:700, cursor:"pointer" }}>✓</button>
+                  </div>
+                ) : (
+                  <div onClick={() => { setEditando(p.id); setNovoValor(String(p.quantidade)); }}
+                    style={{ cursor:"pointer", textAlign:"right" }}>
+                    <div style={{ fontSize:22, fontWeight:800 }}>
+                      {p.quantidade}
+                      <span style={{ fontSize:13, fontWeight:400, color:"#555", marginLeft:4 }}>{p.unidade}</span>
+                    </div>
+                    <div style={{ fontSize:11, color:"#444" }}>toque para editar</div>
+                  </div>
+                )}
+              </div>
+              <Barra p={p} />
+              <div style={{ fontSize:11, color:"#444" }}>Mínimo: {p.minimo} {p.unidade}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
