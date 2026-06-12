@@ -6,12 +6,12 @@ import os
 app = Flask(__name__, static_folder='static', static_url_path='')
 
 # ============================
-# CREDENCIAIS Z-API
+# CREDENCIAIS EVOLUTION API
 # ============================
-ZAPI_INSTANCE = "bc1qmz00uvzyxx0evgw6q06sc2qqy05t6jjqu5t3sd"
-ZAPI_TOKEN    = "4C4B08C5DA31D00158D185CD"
-ZAPI_CLIENT   = "Fd14d44db1a34418ab7ca7685ae613278S"
-TELEFONE_DONO = "5562981295911"
+EVOLUTION_URL      = "https://evolution-api-production-a969.up.railway.app"
+EVOLUTION_INSTANCE = "estoque-restaurante"
+EVOLUTION_TOKEN    = "405A05D5B63D-4EAC-A4BD-41CD53884251"
+TELEFONE_DONO      = "5562981295911"
 
 
 @app.route('/')
@@ -22,7 +22,7 @@ def index():
 
 @app.route('/alerta', methods=['POST'])
 def alerta():
-    """Recebe os dados do produto e envia o alerta no WhatsApp."""
+    """Recebe os dados do produto e envia o alerta no WhatsApp via Evolution API."""
     dados = request.get_json()
 
     produto    = dados.get('produto')
@@ -42,17 +42,20 @@ def alerta():
         f"Providencie a reposição!"
     )
 
-    url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE}/token/{ZAPI_TOKEN}/send-text"
+    url = f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}"
 
     try:
         resposta = httpx.post(
             url,
-            json={"phone": telefone, "message": mensagem},
-            headers={"Client-Token": ZAPI_CLIENT},
+            json={"number": telefone, "text": mensagem},
+            headers={
+                "Content-Type": "application/json",
+                "apikey": EVOLUTION_TOKEN
+            },
             timeout=10.0
         )
         return jsonify({
-            "ok": resposta.status_code == 200,
+            "ok": resposta.status_code in (200, 201),
             "detalhe": resposta.text
         })
     except Exception as erro:
