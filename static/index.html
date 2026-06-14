@@ -18,41 +18,46 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState } = React;
+const { useState, useEffect } = React;
 
 // =============================================
-// Envia a LISTA DE PRODUTOS para o servidor,
-// que monta UMA mensagem e envia ao WhatsApp.
+// FUNÇÕES QUE FALAM COM O BANCO (via main.py)
 // =============================================
-async function enviarListaCompras(produtos) {
-  try {
-    const r = await fetch('/lista-compras', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ produtos })
-    });
-    const data = await r.json();
-    console.log("Resposta do servidor:", data);
-    return data.ok;
-  } catch (e) {
-    console.error("Erro ao enviar lista:", e);
-    return false;
-  }
+async function buscarProdutos() {
+  const r = await fetch('/produtos');
+  if (!r.ok) throw new Error("Falha ao buscar produtos");
+  return r.json();
+}
+
+async function salvarNoBanco(id, quantidade) {
+  await fetch(`/produtos/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quantidade })
+  });
+}
+
+async function criarNoBanco(produto) {
+  const r = await fetch('/produtos', {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(produto)
+  });
+  return r.json();
+}
+
+async function enviarListaCompras() {
+  const r = await fetch('/lista-compras', {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  return r.json();
 }
 
 // =============================================
-// PRODUTOS INICIAIS
-// (Óleo de soja já começa abaixo do mínimo,
-// assim você já vê a lista funcionando)
+// COMPONENTES VISUAIS
 // =============================================
-const PRODUTOS_INICIAIS = [
-  { id:1, nome:"Arroz",        quantidade:8,  minimo:5,  unidade:"kg", categoria:"Grãos"    },
-  { id:2, nome:"Óleo de soja", quantidade:3,  minimo:4,  unidade:"L",  categoria:"Temperos" },
-  { id:3, nome:"Frango",       quantidade:12, minimo:10, unidade:"kg", categoria:"Carnes"   },
-  { id:4, nome:"Feijão",       quantidade:8,  minimo:5,  unidade:"kg", categoria:"Grãos"    },
-  { id:5, nome:"Sal",          quantidade:6,  minimo:3,  unidade:"kg", categoria:"Temperos" },
-];
-
 function badge(bg, color) {
   return { background:bg, color, fontSize:10, fontWeight:700,
     padding:"3px 8px", borderRadius:20, letterSpacing:0.5,
@@ -79,51 +84,111 @@ function Barra({ p }) {
   );
 }
 
+function TelaCarregando() {
+  return (
+    <div style={{ minHeight:"100vh", background:"#111", color:"#888",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      fontFamily:"'Segoe UI',sans-serif", fontSize:14 }}>
+      Carregando estoque...
+    </div>
+  );
+}
+
+function TelaErro() {
+  return (
+    <div style={{ minHeight:"100vh", background:"#111", color:"#FF3B30",
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      fontFamily:"'Segoe UI',sans-serif", gap:14, padding:20, textAlign:"center" }}>
+      <div style={{ fontSize:14 }}>❌ Não foi possível carregar os produtos.</div>
+      <button onClick={() => window.location.reload()}
+        style={{ background:"#FF3B30", color:"#fff", border:"none",
+          borderRadius:8, padding:"10px 22px", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+        Tentar novamente
+      </button>
+    </div>
+  );
+}
+
+// =============================================
+// APP PRINCIPAL
+// =============================================
 function App() {
-  const [produtos, setProdutos]       = useState(PRODUTOS_INICIAIS);
+  const [produtos, setProdutos]       = useState([]);
+  const [carregando, setCarregando]   = useState(true);
+  const [erro, setErro]               = useState(false);
   const [editando, setEditando]       = useState(null);
   const [novoValor, setNovoValor]     = useState("");
+  const [salvandoId, setSalvandoId]   = useState(null);
   const [adicionando, setAdicionando] = useState(false);
+  const [salvandoNovo, setSalvandoNovo] = useState(false);
   const [novo, setNovo]               = useState({ nome:"", quantidade:"", minimo:"", unidade:"kg", categoria:"" });
   const [enviandoLista, setEnviandoLista] = useState(false);
   const [ultimoEnvio, setUltimoEnvio] = useState(null);
 
+  // Busca os produtos do banco quando a tela abre
+  useEffect(() => {
+    buscarProdutos()
+      .then(data => { setProdutos(data); setCarregando(false); })
+      .catch(() => { setErro(true); setCarregando(false); });
+  }, []);
+
   const emAlerta = produtos.filter(p => p.quantidade <= p.minimo);
   const zerados  = produtos.filter(p => p.quantidade === 0);
 
-  // ✅ Agora é só atualizar o número. Sem chamadas, sem envio.
-  function salvar(id) {
+  // Atualiza a tela na hora E salva no banco em segundo plano
+  async function salvar(id) {
     const val = parseFloat(novoValor);
     if (isNaN(val) || val < 0) return;
-    setProdutos(prev => prev.map(p => p.id === id ? { ...p, quantidade: val } : p));
+
     setEditando(null);
     setNovoValor("");
+    setSalvandoId(id);
+
+    setProdutos(prev => prev.map(p => p.id === id ? { ...p, quantidade: val } : p));
+
+    try {
+      await salvarNoBanco(id, val);
+    } catch (e) {
+      console.error("Erro ao salvar no banco:", e);
+    }
+    setSalvandoId(null);
   }
 
-  function adicionarProduto() {
+  // Cria o produto no banco e só então adiciona na tela
+  async function adicionarProduto() {
     if (!novo.nome || novo.quantidade === "" || novo.minimo === "") return;
-    setProdutos(prev => [...prev, {
-      id: Date.now(), nome: novo.nome,
-      quantidade: parseFloat(novo.quantidade),
-      minimo: parseFloat(novo.minimo),
-      unidade: novo.unidade || "un",
-      categoria: novo.categoria || "Geral"
-    }]);
-    setNovo({ nome:"", quantidade:"", minimo:"", unidade:"kg", categoria:"" });
-    setAdicionando(false);
+
+    setSalvandoNovo(true);
+    try {
+      const criado = await criarNoBanco({
+        nome: novo.nome,
+        quantidade: parseFloat(novo.quantidade),
+        minimo: parseFloat(novo.minimo),
+        unidade: novo.unidade || "un",
+        categoria: novo.categoria || "Geral"
+      });
+      setProdutos(prev => [...prev, criado]);
+      setNovo({ nome:"", quantidade:"", minimo:"", unidade:"kg", categoria:"" });
+      setAdicionando(false);
+    } catch (e) {
+      console.error("Erro ao criar produto:", e);
+    }
+    setSalvandoNovo(false);
   }
 
-  // Dispara o envio da lista consolidada
   async function handleEnviarLista() {
     if (emAlerta.length === 0 || enviandoLista) return;
     setEnviandoLista(true);
-    const ok = await enviarListaCompras(emAlerta);
+    const data = await enviarListaCompras();
     setUltimoEnvio({
       hora: new Date().toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }),
-      sucesso: ok
+      sucesso: data.ok
     });
     setEnviandoLista(false);
   }
+
+  if (carregando) return <TelaCarregando />;
+  if (erro) return <TelaErro />;
 
   return (
     <div style={{ minHeight:"100vh", background:"#111", color:"#f0f0f0",
@@ -162,7 +227,7 @@ function App() {
 
       <div style={{ maxWidth:600, margin:"0 auto", padding:"0 16px" }}>
 
-        {/* LISTA DE REPOSIÇÃO (preview do que será enviado) */}
+        {/* LISTA DE REPOSIÇÃO */}
         {emAlerta.length > 0 ? (
           <div style={{ marginTop:20 }}>
             <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase", marginBottom:10 }}>
@@ -222,12 +287,14 @@ function App() {
                 ))}
               </div>
               <div style={{ display:"flex", gap:8, marginTop:12 }}>
-                <button onClick={adicionarProduto}
-                  style={{ background:"#34C759", color:"#000", border:"none",
-                    borderRadius:8, padding:"8px 18px", fontSize:13, fontWeight:700, cursor:"pointer", flex:1 }}>
-                  Salvar
+                <button onClick={adicionarProduto} disabled={salvandoNovo}
+                  style={{ background: salvandoNovo ? "#1a4d33" : "#34C759",
+                    color: salvandoNovo ? "#7ab896" : "#000", border:"none",
+                    borderRadius:8, padding:"8px 18px", fontSize:13, fontWeight:700,
+                    cursor: salvandoNovo ? "default" : "pointer", flex:1 }}>
+                  {salvandoNovo ? "Salvando..." : "Salvar"}
                 </button>
-                <button onClick={() => setAdicionando(false)}
+                <button onClick={() => setAdicionando(false)} disabled={salvandoNovo}
                   style={{ background:"#222", color:"#888", border:"1px solid #333",
                     borderRadius:8, padding:"8px 18px", fontSize:13, cursor:"pointer" }}>
                   Cancelar
@@ -262,13 +329,15 @@ function App() {
                         borderRadius:6, padding:"4px 10px", fontSize:13, fontWeight:700, cursor:"pointer" }}>✓</button>
                   </div>
                 ) : (
-                  <div onClick={() => { setEditando(p.id); setNovoValor(String(p.quantidade)); }}
-                    style={{ cursor:"pointer", textAlign:"right" }}>
+                  <div onClick={() => { if(salvandoId !== p.id) { setEditando(p.id); setNovoValor(String(p.quantidade)); } }}
+                    style={{ cursor: salvandoId === p.id ? "default" : "pointer", textAlign:"right" }}>
                     <div style={{ fontSize:22, fontWeight:800 }}>
                       {p.quantidade}
                       <span style={{ fontSize:13, fontWeight:400, color:"#555", marginLeft:4 }}>{p.unidade}</span>
                     </div>
-                    <div style={{ fontSize:11, color:"#444" }}>toque para editar</div>
+                    <div style={{ fontSize:11, color: salvandoId === p.id ? "#34C759" : "#444" }}>
+                      {salvandoId === p.id ? "salvando..." : "toque para editar"}
+                    </div>
                   </div>
                 )}
               </div>
