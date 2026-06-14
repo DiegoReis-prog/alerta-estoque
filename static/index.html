@@ -9,9 +9,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #111; color: #f0f0f0; font-family: 'Segoe UI', sans-serif; padding-bottom: 60px; }
+  body { background: #111; color: #f0f0f0; font-family: 'Segoe UI', sans-serif; }
   input:focus { outline: none; }
   button:active { opacity: 0.8; }
+  button:disabled { cursor: default; }
 </style>
 </head>
 <body>
@@ -20,38 +21,34 @@
 const { useState } = React;
 
 // =============================================
-// Envia o alerta para o NOSSO PRÓPRIO servidor
-// (mesmo endereço da tela, por isso o caminho
-// começa com "/" e não com "https://...")
+// Envia a LISTA DE PRODUTOS para o servidor,
+// que monta UMA mensagem e envia ao WhatsApp.
 // =============================================
-async function enviarAlerta(produto) {
+async function enviarListaCompras(produtos) {
   try {
-    const r = await fetch('/alerta', {
+    const r = await fetch('/lista-compras', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        produto:    produto.nome,
-        quantidade: produto.quantidade,
-        minimo:     produto.minimo,
-        unidade:    produto.unidade
-      })
+      body: JSON.stringify({ produtos })
     });
     const data = await r.json();
     console.log("Resposta do servidor:", data);
     return data.ok;
   } catch (e) {
-    console.error("Erro ao enviar alerta:", e);
+    console.error("Erro ao enviar lista:", e);
     return false;
   }
 }
 
 // =============================================
-// PRODUTOS INICIAIS (todos OK para o teste)
+// PRODUTOS INICIAIS
+// (Óleo de soja já começa abaixo do mínimo,
+// assim você já vê a lista funcionando)
 // =============================================
 const PRODUTOS_INICIAIS = [
   { id:1, nome:"Arroz",        quantidade:8,  minimo:5,  unidade:"kg", categoria:"Grãos"    },
-  { id:2, nome:"Óleo de soja", quantidade:6,  minimo:4,  unidade:"L",  categoria:"Temperos" },
-  { id:3, nome:"Frango",       quantidade:15, minimo:10, unidade:"kg", categoria:"Carnes"   },
+  { id:2, nome:"Óleo de soja", quantidade:3,  minimo:4,  unidade:"L",  categoria:"Temperos" },
+  { id:3, nome:"Frango",       quantidade:12, minimo:10, unidade:"kg", categoria:"Carnes"   },
   { id:4, nome:"Feijão",       quantidade:8,  minimo:5,  unidade:"kg", categoria:"Grãos"    },
   { id:5, nome:"Sal",          quantidade:6,  minimo:3,  unidade:"kg", categoria:"Temperos" },
 ];
@@ -84,54 +81,23 @@ function Barra({ p }) {
 
 function App() {
   const [produtos, setProdutos]       = useState(PRODUTOS_INICIAIS);
-  const [alertas, setAlertas]         = useState([]);
   const [editando, setEditando]       = useState(null);
   const [novoValor, setNovoValor]     = useState("");
   const [adicionando, setAdicionando] = useState(false);
   const [novo, setNovo]               = useState({ nome:"", quantidade:"", minimo:"", unidade:"kg", categoria:"" });
-  const [enviando, setEnviando]       = useState(false);
+  const [enviandoLista, setEnviandoLista] = useState(false);
+  const [ultimoEnvio, setUltimoEnvio] = useState(null);
 
   const emAlerta = produtos.filter(p => p.quantidade <= p.minimo);
   const zerados  = produtos.filter(p => p.quantidade === 0);
 
-  async function salvar(id) {
+  // ✅ Agora é só atualizar o número. Sem chamadas, sem envio.
+  function salvar(id) {
     const val = parseFloat(novoValor);
     if (isNaN(val) || val < 0) return;
-
-    // Pega os dados ATUAIS do produto antes de qualquer atualização
-    const produtoAtual = produtos.find(p => p.id === id);
-    if (!produtoAtual) return;
-
-    const produtoAtualizado = { ...produtoAtual, quantidade: val };
-
-    // Atualiza a lista na tela
-    setProdutos(prev => prev.map(p => p.id === id ? produtoAtualizado : p));
+    setProdutos(prev => prev.map(p => p.id === id ? { ...p, quantidade: val } : p));
     setEditando(null);
     setNovoValor("");
-
-    // Verifica usando o valor que acabamos de calcular (não depende do estado)
-    if (val <= produtoAtual.minimo) {
-      console.log("Abaixo do mínimo! Disparando alerta para:", produtoAtualizado.nome);
-
-      const jaExiste = alertas.find(a => a.pid === id && !a.lido);
-      if (!jaExiste) {
-        setAlertas(prev => [{
-          id: Date.now(), pid: id,
-          nome: produtoAtual.nome, qtd: val,
-          min: produtoAtual.minimo, un: produtoAtual.unidade,
-          hora: new Date().toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }),
-          lido: false, enviado: false
-        }, ...prev]);
-      }
-
-      setEnviando(true);
-      const ok = await enviarAlerta(produtoAtualizado);
-      setEnviando(false);
-
-      setAlertas(prev => prev.map(a =>
-        a.pid === id && !a.lido ? { ...a, enviado: ok } : a
-      ));
-    }
   }
 
   function adicionarProduto() {
@@ -147,10 +113,22 @@ function App() {
     setAdicionando(false);
   }
 
-  const alertasAtivos = alertas.filter(a => !a.lido);
+  // Dispara o envio da lista consolidada
+  async function handleEnviarLista() {
+    if (emAlerta.length === 0 || enviandoLista) return;
+    setEnviandoLista(true);
+    const ok = await enviarListaCompras(emAlerta);
+    setUltimoEnvio({
+      hora: new Date().toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }),
+      sucesso: ok
+    });
+    setEnviandoLista(false);
+  }
 
   return (
-    <div style={{ minHeight:"100vh", background:"#111", color:"#f0f0f0", fontFamily:"'Segoe UI',sans-serif", paddingBottom:60 }}>
+    <div style={{ minHeight:"100vh", background:"#111", color:"#f0f0f0",
+      fontFamily:"'Segoe UI',sans-serif",
+      paddingBottom: emAlerta.length > 0 ? 110 : 30 }}>
 
       {/* HEADER */}
       <div style={{ background:"linear-gradient(135deg,#1a1a1a,#222)", borderBottom:"1px solid #2a2a2a", padding:"20px 16px 16px" }}>
@@ -160,14 +138,11 @@ function App() {
               <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase", marginBottom:4 }}>Restaurante</div>
               <div style={{ fontSize:22, fontWeight:700 }}>Controle de Estoque</div>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
-              {alertasAtivos.length > 0 && (
-                <div style={{ background:"#FF3B30", color:"#fff", borderRadius:20, padding:"6px 14px", fontSize:13, fontWeight:700 }}>
-                  {alertasAtivos.length} alerta{alertasAtivos.length > 1 ? "s" : ""}
-                </div>
-              )}
-              {enviando && <div style={{ fontSize:11, color:"#25D366" }}>📲 Enviando WhatsApp...</div>}
-            </div>
+            {emAlerta.length > 0 && (
+              <div style={{ background:"#FF3B30", color:"#fff", borderRadius:20, padding:"6px 14px", fontSize:13, fontWeight:700 }}>
+                {emAlerta.length} alerta{emAlerta.length > 1 ? "s" : ""}
+              </div>
+            )}
           </div>
 
           <div style={{ display:"flex", gap:10, marginTop:16 }}>
@@ -187,30 +162,32 @@ function App() {
 
       <div style={{ maxWidth:600, margin:"0 auto", padding:"0 16px" }}>
 
-        {/* ALERTAS */}
-        {alertasAtivos.length > 0 && (
+        {/* LISTA DE REPOSIÇÃO (preview do que será enviado) */}
+        {emAlerta.length > 0 ? (
           <div style={{ marginTop:20 }}>
-            <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase", marginBottom:10 }}>Alertas pendentes</div>
-            {alertasAtivos.map(a => (
-              <div key={a.id} style={{ background:"#1e1310", border:"1px solid #3a2010", borderRadius:12, padding:16, marginBottom:10 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                  <div>
-                    <div style={{ fontWeight:700, fontSize:15 }}>⚠️ {a.nome}</div>
-                    <div style={{ color:"#888", fontSize:13, marginTop:4 }}>
-                      {a.qtd} {a.un} · mín: {a.min} {a.un} · {a.hora}
-                    </div>
-                    <div style={{ fontSize:12, marginTop:4, color: a.enviado ? "#25D366" : "#888" }}>
-                      {a.enviado ? "📲 WhatsApp enviado!" : "⏳ Enviando..."}
-                    </div>
-                  </div>
-                  <button onClick={() => setAlertas(prev => prev.map(x => x.id===a.id ? {...x,lido:true} : x))}
-                    style={{ background:"none", border:"1px solid #3a2010", color:"#888",
-                      borderRadius:8, padding:"4px 10px", fontSize:12, cursor:"pointer" }}>
-                    ✓ Ok
-                  </button>
+            <div style={{ fontSize:11, color:"#666", letterSpacing:2, textTransform:"uppercase", marginBottom:10 }}>
+              Lista de Reposição ({emAlerta.length})
+            </div>
+            <div style={{ background:"#1e1310", border:"1px solid #3a2010", borderRadius:12, padding:"4px 16px" }}>
+              {emAlerta.map((p, i) => (
+                <div key={p.id} style={{
+                  display:"flex", justifyContent:"space-between", alignItems:"center",
+                  padding:"10px 0",
+                  borderBottom: i < emAlerta.length - 1 ? "1px solid #2a1810" : "none"
+                }}>
+                  <span style={{ fontSize:13, fontWeight:600 }}>📦 {p.nome}</span>
+                  <span style={{ fontSize:12, color:"#aaa" }}>
+                    {p.quantidade}{p.unidade}
+                    <span style={{ color:"#666" }}> (mín {p.minimo}{p.unidade})</span>
+                  </span>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop:20, background:"#0d1f1a", border:"1px solid #1a3d2a",
+            borderRadius:12, padding:16, textAlign:"center", color:"#34C759", fontSize:13 }}>
+            ✅ Tudo em dia! Nenhum produto precisa de reposição.
           </div>
         )}
 
@@ -301,6 +278,38 @@ function App() {
           ))}
         </div>
       </div>
+
+      {/* BOTÃO FIXO: ENVIAR LISTA DE COMPRAS */}
+      {emAlerta.length > 0 && (
+        <div style={{
+          position:"fixed", bottom:0, left:0, right:0,
+          background:"#1a1a1a", borderTop:"1px solid #2a2a2a",
+          padding:"12px 16px", zIndex:100
+        }}>
+          <div style={{ maxWidth:600, margin:"0 auto" }}>
+            <button onClick={handleEnviarLista} disabled={enviandoLista}
+              style={{
+                width:"100%",
+                background: enviandoLista ? "#1a4d33" : "#25D366",
+                color: enviandoLista ? "#7ab896" : "#0a0a0a",
+                border:"none", borderRadius:10, padding:"14px",
+                fontSize:14, fontWeight:700, cursor: enviandoLista ? "default" : "pointer"
+              }}>
+              {enviandoLista ? "Enviando..." : `📲 Enviar Lista de Compras (${emAlerta.length})`}
+            </button>
+            {ultimoEnvio && (
+              <div style={{
+                marginTop:6, fontSize:11, textAlign:"center",
+                color: ultimoEnvio.sucesso ? "#25D366" : "#FF3B30"
+              }}>
+                {ultimoEnvio.sucesso
+                  ? `✅ Lista enviada às ${ultimoEnvio.hora}`
+                  : `❌ Erro ao enviar (${ultimoEnvio.hora}) — tente de novo`}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
