@@ -12,7 +12,7 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 EVOLUTION_URL      = "https://evolution-api-production-a969.up.railway.app"
 EVOLUTION_INSTANCE = "estoque-restaurante"
 EVOLUTION_TOKEN    = "405A05D5B63D-4EAC-A4BD-41CD53884251"
-TELEFONE_DONO      = "5562981295911"
+TELEFONE_DONO      = "5562996778334"
 
 
 @app.route('/')
