@@ -12,8 +12,6 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 # ============================
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
-# O Railway às vezes entrega o endereço como "postgres://"
-# mas a biblioteca que usamos exige "postgresql://"
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
@@ -66,23 +64,34 @@ def preparar_banco():
     conn.close()
 
 
-# Executa ao iniciar o servidor
 preparar_banco()
 
 
 # ============================
-# CREDENCIAIS EVOLUTION API
+# CONFIGURAÇÃO DO CLIENTE
+# Tudo aqui vem das "Variables" do Railway.
+# Para um restaurante novo, basta trocar esses
+# valores no painel, sem tocar no código.
 # ============================
-EVOLUTION_URL      = "https://evolution-api-production-a969.up.railway.app"
-EVOLUTION_INSTANCE = "estoque-restaurante"
-EVOLUTION_TOKEN    = "405A05D5B63D-4EAC-A4BD-41CD53884251"
-TELEFONE_DONO      = "5562996778334"
+NOME_RESTAURANTE   = os.environ.get('NOME_RESTAURANTE', 'Meu Restaurante')
+EVOLUTION_URL      = os.environ.get('EVOLUTION_URL', '')
+EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', '')
+EVOLUTION_TOKEN    = os.environ.get('EVOLUTION_TOKEN', '')
+TELEFONE_DONO      = os.environ.get('TELEFONE_DONO', '')
 
 
 @app.route('/')
 def index():
     """Mostra a tela de controle de estoque."""
     return send_from_directory('static', 'index.html')
+
+
+@app.route('/config')
+def config():
+    """Informações de identidade do restaurante para a tela."""
+    return jsonify({
+        "nome_restaurante": NOME_RESTAURANTE
+    })
 
 
 # ============================
